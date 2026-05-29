@@ -98,8 +98,7 @@ async def mobile_send(
         part.add_header("Content-Disposition", f'attachment; filename="{resume_name}"')
         msg.attach(part)
 
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.send_message(msg)
         server.quit()
