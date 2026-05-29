@@ -52,7 +52,12 @@ def extract_role_name(text: str) -> str:
 @app.get("/")
 def health():
     configured = bool(SENDER_EMAIL and SENDER_PASSWORD)
-    return {"status": "running", "email_configured": configured}
+    return {
+        "status": "running",
+        "email_configured": configured,
+        "email_address_set": bool(os.environ.get("EMAIL_ADDRESS")),
+        "password_set": bool(os.environ.get("EMAIL_APP_PASSWORD")),
+    }
 
 
 @app.post("/mobile-send")
