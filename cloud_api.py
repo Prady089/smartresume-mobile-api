@@ -1,20 +1,15 @@
 import os
-import socket
-import smtplib
-import ssl
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 
-# Force IPv4 — Render containers default to IPv6 which Gmail SMTP blocks
-_orig_getaddrinfo = socket.getaddrinfo
-def _ipv4_getaddrinfo(host, port, family=0, *args, **kwargs):
-    return _orig_getaddrinfo(host, port, socket.AF_INET, *args, **kwargs)
-socket.getaddrinfo = _ipv4_getaddrinfo
-
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 
 app = FastAPI(title="SmartResume Mobile API")
 
@@ -26,7 +21,6 @@ app.add_middleware(
 )
 
 SENDER_EMAIL = os.environ.get("EMAIL_ADDRESS", "")
-SENDER_PASSWORD = os.environ.get("EMAIL_APP_PASSWORD", "")
 SENDER_NAME = os.environ.get("SENDER_NAME", "Pradeep Kumar Ramadoss")
 STANDARD_DRAFT = os.environ.get(
     "STANDARD_DRAFT",
@@ -38,6 +32,17 @@ STANDARD_DRAFT = os.environ.get(
     "Current Location: Dallas, Texas\nVisa Status: H1B (Valid until Sep 2028)\n\n"
     "Best regards,\nPradeep Kumar Ramadoss\n+1 682-436-4050\nPradeepkumar089@gmail.com"
 )
+
+
+def get_gmail_service():
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ.get("GMAIL_REFRESH_TOKEN"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ.get("GMAIL_CLIENT_ID"),
+        client_secret=os.environ.get("GMAIL_CLIENT_SECRET"),
+    )
+    return build("gmail", "v1", credentials=creds)
 
 
 def extract_role_name(text: str) -> str:
@@ -59,7 +64,11 @@ def extract_role_name(text: str) -> str:
 
 @app.get("/")
 def health():
-    configured = bool(SENDER_EMAIL and SENDER_PASSWORD)
+    configured = all([
+        os.environ.get("GMAIL_CLIENT_ID"),
+        os.environ.get("GMAIL_CLIENT_SECRET"),
+        os.environ.get("GMAIL_REFRESH_TOKEN"),
+    ])
     return {"status": "running", "email_configured": configured}
 
 
@@ -71,16 +80,9 @@ async def mobile_send(
     email_body: str = Form(""),
     resume: UploadFile = File(...),
 ):
-    """
-    Single endpoint for the iOS Shortcut.
-    Accepts multipart form data: recruiter email, optional JD text, optional
-    pre-written body, and the resume file. Generates the email body from the
-    standard draft if none is supplied, then sends via Gmail SMTP.
-    """
-    if not SENDER_EMAIL or not SENDER_PASSWORD:
-        raise HTTPException(status_code=500, detail="Email credentials not configured on server")
+    if not os.environ.get("GMAIL_REFRESH_TOKEN"):
+        raise HTTPException(status_code=500, detail="Gmail not configured on server")
 
-    # Build email body from standard draft if caller didn't supply one
     if not email_body:
         role_name = extract_role_name(jd_text) if jd_text else "the position"
         name_placeholder = recruiter_name if recruiter_name else "Hiring Manager"
@@ -93,23 +95,24 @@ async def mobile_send(
     resume_data = await resume.read()
     resume_name = resume.filename or "Resume.docx"
 
+    # Build MIME message
+    msg = MIMEMultipart()
+    msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
+    msg["To"] = recruiter_email
+    msg["Subject"] = f"Application for Position - {SENDER_NAME}"
+    msg.attach(MIMEText(email_body, "plain"))
+
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload(resume_data)
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{resume_name}"')
+    msg.attach(part)
+
+    # Send via Gmail API (HTTPS — no SMTP ports needed)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     try:
-        msg = MIMEMultipart()
-        msg["From"] = f"{SENDER_NAME} <{SENDER_EMAIL}>"
-        msg["To"] = recruiter_email
-        msg["Subject"] = f"Application for Position - {SENDER_NAME}"
-        msg.attach(MIMEText(email_body, "plain"))
-
-        part = MIMEBase("application", "octet-stream")
-        part.set_payload(resume_data)
-        encoders.encode_base64(part)
-        part.add_header("Content-Disposition", f'attachment; filename="{resume_name}"')
-        msg.attach(part)
-
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.send_message(msg)
-        server.quit()
+        service = get_gmail_service()
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
