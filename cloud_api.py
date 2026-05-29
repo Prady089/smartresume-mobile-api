@@ -52,13 +52,7 @@ def extract_role_name(text: str) -> str:
 @app.get("/")
 def health():
     configured = bool(SENDER_EMAIL and SENDER_PASSWORD)
-    # Show all env var keys that don't look like system secrets (for debugging)
-    user_keys = [k for k in os.environ.keys() if not k.startswith(("PATH", "HOME", "USER", "PYTHON", "PIP", "VIRTUAL"))]
-    return {
-        "status": "running",
-        "email_configured": configured,
-        "visible_env_keys": sorted(user_keys),
-    }
+    return {"status": "running", "email_configured": configured}
 
 
 @app.post("/mobile-send")
