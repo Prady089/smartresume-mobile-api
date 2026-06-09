@@ -64,15 +64,12 @@ def extract_role_name(text: str) -> str:
 
 @app.get("/")
 def health():
-    client_id = os.environ.get("GMAIL_CLIENT_ID", "")
-    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN", "")
-    configured = all([client_id, os.environ.get("GMAIL_CLIENT_SECRET"), refresh_token])
-    return {
-        "status": "running",
-        "email_configured": configured,
-        "client_id_prefix": client_id[:20] if client_id else "not set",
-        "token_prefix": refresh_token[:10] if refresh_token else "not set",
-    }
+    configured = all([
+        os.environ.get("GMAIL_CLIENT_ID"),
+        os.environ.get("GMAIL_CLIENT_SECRET"),
+        os.environ.get("GMAIL_REFRESH_TOKEN"),
+    ])
+    return {"status": "running", "email_configured": configured}
 
 
 @app.post("/mobile-send")
